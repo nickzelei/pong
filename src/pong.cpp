@@ -1,3 +1,4 @@
+#include <chrono>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <stdio.h>
@@ -8,6 +9,31 @@ const int BALL_WIDTH = 15;
 const int BALL_HEIGHT = 15;
 const int PADDLE_WIDTH = 10;
 const int PADDLE_HEIGHT = 100;
+
+enum Buttons
+{
+  PaddleOneUp = 0,
+  PaddleOneDown,
+  PaddleTwoUp,
+  PaddleTwoDown,
+};
+
+enum class CollisionType
+{
+  None,
+  Top,
+  Middle,
+  Bottom,
+};
+
+struct Contact
+{
+  CollisionType type;
+  float penetration;
+};
+
+const float PADDLE_SPEED = 1.0f;
+const float BALL_SPEED = 1.0f;
 
 class Vec2
 {
@@ -46,8 +72,8 @@ public:
 class Ball
 {
 public:
-  Ball(Vec2 position)
-      : position(position)
+  Ball(Vec2 position, Vec2 velocity)
+      : position(position), velocity(velocity)
   {
     rect.x = static_cast<int>(position.x);
     rect.y = static_cast<int>(position.y);
@@ -63,15 +89,36 @@ public:
     SDL_RenderFillRect(renderer, &rect);
   }
 
+  void Update(float dt)
+  {
+    position += velocity * dt;
+  }
+
+  void CollideWithPaddle(Contact const &contact)
+  {
+    position.x += contact.penetration;
+    velocity.x = -velocity.x;
+
+    if (contact.type == CollisionType::Top)
+    {
+      velocity.y = -.75f * BALL_SPEED;
+    }
+    else if (contact.type == CollisionType::Bottom)
+    {
+      velocity.y = 0.75f * BALL_SPEED;
+    }
+  }
+
   Vec2 position;
+  Vec2 velocity;
   SDL_Rect rect;
 };
 
 class Paddle
 {
 public:
-  Paddle(Vec2 position)
-      : position(position)
+  Paddle(Vec2 position, Vec2 velocity)
+      : position(position), velocity(velocity)
   {
     rect.x = static_cast<int>(position.x);
     rect.y = static_cast<int>(position.y);
@@ -86,7 +133,22 @@ public:
     SDL_RenderFillRect(renderer, &rect);
   }
 
+  void Update(float dt)
+  {
+    position += velocity * dt;
+
+    if (position.y < 0)
+    {
+      position.y = 0;
+    }
+    else if (position.y > (WINDOW_HEIGHT - PADDLE_HEIGHT))
+    {
+      position.y = WINDOW_HEIGHT - PADDLE_HEIGHT;
+    }
+  }
+
   Vec2 position;
+  Vec2 velocity;
   SDL_Rect rect;
 };
 
@@ -132,6 +194,67 @@ public:
   SDL_Rect rect;
 };
 
+Contact CheckPaddleCollision(Ball const &ball, Paddle const &paddle)
+{
+  float ballLeft = ball.position.x;
+  float ballRight = ball.position.x + BALL_WIDTH;
+  float ballTop = ball.position.y;
+  float ballBottom = ball.position.y + BALL_HEIGHT;
+
+  float paddleLeft = paddle.position.x;
+  float paddleRight = paddle.position.x + PADDLE_WIDTH;
+  float paddleTop = paddle.position.y;
+  float paddleBottom = paddle.position.y + PADDLE_HEIGHT;
+
+  Contact contact{};
+
+  if (ballLeft >= paddleRight)
+  {
+    return contact;
+  }
+  if (ballRight <= paddleLeft)
+  {
+    return contact;
+  }
+  if (ballTop >= paddleBottom)
+  {
+    return contact;
+  }
+  if (ballBottom <= paddleTop)
+  {
+    return contact;
+  }
+
+  float paddleRangeUpper = paddleBottom - (2.0f * PADDLE_HEIGHT / 3.0f);
+  float paddleRangeMiddle = paddleBottom - (PADDLE_HEIGHT / 3.0f);
+
+  if (ball.velocity.x < 0)
+  {
+    // Left paddle
+    contact.penetration = paddleRight - ballLeft;
+  }
+  else if (ball.velocity.x > 0)
+  {
+    // Right paddle
+    contact.penetration = paddleLeft - ballRight;
+  }
+
+  if ((ballBottom > ballTop) && (ballBottom < paddleRangeUpper))
+  {
+    contact.type = CollisionType::Top;
+  }
+  else if ((ballBottom > paddleRangeUpper) && (ballBottom < paddleRangeMiddle))
+  {
+    contact.type = CollisionType::Middle;
+  }
+  else
+  {
+    contact.type = CollisionType::Bottom;
+  }
+
+  return contact;
+}
+
 int main()
 {
   // Init SDL components
@@ -152,21 +275,28 @@ int main()
 
   Ball ball(
       Vec2((WINDOW_WIDTH / 2.0f) - (BALL_WIDTH / 2.0f),
-           (WINDOW_HEIGHT / 2.0f) - (BALL_WIDTH / 2.0f)));
+           (WINDOW_HEIGHT / 2.0f) - (BALL_WIDTH / 2.0f)),
+      Vec2(BALL_SPEED, 0.0f));
 
   Paddle paddleOne(
-      Vec2(50.0f, (WINDOW_HEIGHT / 2.0f) - (PADDLE_HEIGHT / 2.0f)));
+      Vec2(50.0f, (WINDOW_HEIGHT / 2.0f) - (PADDLE_HEIGHT / 2.0f)),
+      Vec2(0.0f, 0.0f));
 
   Paddle paddleTwo(
-      Vec2(WINDOW_WIDTH - 50.0f, (WINDOW_HEIGHT / 2.0f) - (PADDLE_HEIGHT / 2.0f)));
+      Vec2(WINDOW_WIDTH - 50.0f, (WINDOW_HEIGHT / 2.0f) - (PADDLE_HEIGHT / 2.0f)),
+      Vec2(0.0f, 0.0f));
 
   // Game Logic
   {
     bool running = true;
+    bool buttons[4] = {};
+
+    float dt = 0.0f;
 
     // Continue looping and processing events until user exits
     while (running)
     {
+      auto startTime = std::chrono::high_resolution_clock::now();
       SDL_Event event;
       while (SDL_PollEvent(&event))
       {
@@ -180,8 +310,87 @@ int main()
           {
             running = false;
           }
+          else if (event.key.keysym.sym == SDLK_w)
+          {
+            buttons[Buttons::PaddleOneUp] = true;
+          }
+          else if (event.key.keysym.sym == SDLK_s)
+          {
+            buttons[Buttons::PaddleOneDown] = true;
+          }
+          else if (event.key.keysym.sym == SDLK_UP)
+          {
+            buttons[Buttons::PaddleTwoUp] = true;
+          }
+          else if (event.key.keysym.sym == SDLK_DOWN)
+          {
+            buttons[Buttons::PaddleTwoDown] = true;
+          }
+        }
+        else if (event.type == SDL_KEYUP)
+        {
+          if (event.key.keysym.sym == SDLK_w)
+          {
+            buttons[Buttons::PaddleOneUp] = false;
+          }
+          else if (event.key.keysym.sym == SDLK_s)
+          {
+            buttons[Buttons::PaddleOneDown] = false;
+          }
+          else if (event.key.keysym.sym == SDLK_UP)
+          {
+            buttons[Buttons::PaddleTwoUp] = false;
+          }
+          else if (event.key.keysym.sym == SDLK_DOWN)
+          {
+            buttons[Buttons::PaddleTwoDown] = false;
+          }
         }
       }
+
+      if (buttons[Buttons::PaddleOneUp])
+      {
+        paddleOne.velocity.y = -PADDLE_SPEED;
+      }
+      else if (buttons[Buttons::PaddleOneDown])
+      {
+        paddleOne.velocity.y = PADDLE_SPEED;
+      }
+      else
+      {
+        paddleOne.velocity.y = 0.0f;
+      }
+
+      if (buttons[Buttons::PaddleTwoUp])
+      {
+        paddleTwo.velocity.y = -PADDLE_SPEED;
+      }
+      else if (buttons[Buttons::PaddleTwoDown])
+      {
+        paddleTwo.velocity.y = PADDLE_SPEED;
+      }
+      else
+      {
+        paddleTwo.velocity.y = 0.0f;
+      }
+
+      // Update paddle positions
+      paddleOne.Update(dt);
+      paddleTwo.Update(dt);
+
+      // Update the ball position
+      ball.Update(dt);
+
+      // Check collisions
+      if (Contact contact = CheckPaddleCollision(ball, paddleOne); contact.type != CollisionType::None)
+      {
+        ball.CollideWithPaddle(contact);
+      }
+      else if (Contact contact = CheckPaddleCollision(ball, paddleTwo); contact.type != CollisionType::None)
+      {
+        ball.CollideWithPaddle(contact);
+      }
+
       // Clear the window to black
       SDL_SetRenderDrawColor(renderer, 0x0, 0x0, 0x0, 0xFF);
       SDL_RenderClear(renderer);
@@ -215,6 +424,10 @@ int main()
 
       // Present the backbuffer
       SDL_RenderPresent(renderer);
+
+      // Calculate frame time
+      auto stopTime = std::chrono::high_resolution_clock::now();
+      dt = std::chrono::duration<float, std::chrono::milliseconds::period>(stopTime - startTime).count();
     }
   }
 
