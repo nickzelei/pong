@@ -239,7 +239,7 @@ Contact CheckPaddleCollision(Ball const &ball, Paddle const &paddle)
     contact.penetration = paddleLeft - ballRight;
   }
 
-  if ((ballBottom > ballTop) && (ballBottom < paddleRangeUpper))
+  if ((ballBottom > paddleTop) && (ballBottom < paddleRangeUpper))
   {
     contact.type = CollisionType::Top;
   }
