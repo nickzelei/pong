@@ -39,7 +39,7 @@ class Vec2
 {
 public:
   Vec2()
-      : x(0x0f), y(0.0f)
+      : x(0.0f), y(0.0f)
   {
   }
 
